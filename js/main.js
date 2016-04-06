@@ -91,7 +91,13 @@ function onEndingPlayerStateChange(newState) {
     if ( !music_disable ) {
       BGM_player.play();
     }
-    $(".ending").off('mousewheel').off('scroll').fadeOut();
+    $(".ending").off('mousewheel').off('scroll').fadeOut(function() {
+        var $text = $('.ending_wrapper .text');
+        $text.data('offset_top', $text.offset().top);
+        var $scene = $('.ending_wrapper .scene');
+        $scene.data('offset_top', $scene.offset().top);
+        $(document).trigger('scrolled');
+    });
     ending_player = false;
   }
 }
@@ -249,7 +255,11 @@ function closeOpening () {
       $(".scene").each(function(){
         var $scene = $(this);
         $scene.data('offset_top', $scene.offset().top);
+        $scene.data('height', $scene.height());
       });
+
+      var $ending_wrapper = $(".ending_wrapper");
+      $ending_wrapper.data('offset_top', $ending_wrapper.offset().top);
     };
     fix_size();
     $(window).resize(fix_size);
@@ -262,33 +272,33 @@ function closeOpening () {
     var init_mousewheel = function(){
       var $wrapper = $(".wrapper");
       var $document = $(document);
-      $(".scene").each(function(index){
-        var $scene = $(this),
-            $inner_bg = $scene.find(".inner_bg")
-        ;
+      var $scenes = $('.scene');
+      $(document).on('scrolled', function(){
+        $scenes.filter(function(i, scene) {
+          var $scene = $(scene);
+          var data = $scene.data();
+          return $scroll_top + $window_height > data.offset_top &&
+                 $scroll_top < data.offset_top + data.height;
+        }).each(function(i, scene) {
+          var $scene = $(scene);
+          $inner_bg = $scene.find(".inner_bg")
+          var clamped_pos = Math.min($scroll_top - $scene.data('offset_top'), $window_height * 4);
+          var background_position_top = $window_height * 0.088 * clamped_pos / $window_height;
+          background_position_top = Math.max(background_position_top,0);
+          $scene.css({"background-position": "center -" + background_position_top + "px"});
+          $inner_bg.css({"background-position": "center -" + background_position_top + "px"});
 
-        $(document).on('scrolled', function(){
+          var percent = ($scroll_top - ($scene.data('offset_top')+$window_height)) / $window_height;
+          percent = Math.max(percent,0);
+          $inner_bg.css("opacity", Math.min(percent, 1));
+
+          var _num = parseInt($scene.attr('id').replace(/^[^\d]*(\d+)[^\d]*$/, "$1"), 10);
           if(
-            $scroll_top + $window_height > $scene.data('offset_top') &&
-            $scene.data('offset_top') + $window_height * 4 > $scroll_top
+            $scroll_top > $scene.data('offset_top') &&
+            $scene.data('offset_top') + $scene.data('height') > $scroll_top &&
+            scene_num !== _num
           ) {
-            var background_position_top = $window_height * 0.088 * ($scroll_top - $scene.data('offset_top'))  / $window_height;
-            background_position_top = Math.max(background_position_top,0);
-            $scene.css({"background-position": "center -" + background_position_top + "px"});
-            $inner_bg.css({"background-position": "center -" + background_position_top + "px"});
-
-            var percent = ($scroll_top - ($scene.data('offset_top')+$window_height)) / $window_height;
-            percent = Math.max(percent,0);
-            $inner_bg.css("opacity", Math.min(percent, 1));
-
-            var _num = parseInt($scene.attr('id').replace(/^[^\d]*(\d+)[^\d]*$/, "$1"), 10);
-            if(
-              $scroll_top > $scene.data('offset_top') &&
-              $scene.data('offset_top') + $scene.height() > $scroll_top &&
-              scene_num !== _num
-            ) {
-              $(document).trigger('change_nav', _num);
-            }
+            $(document).trigger('change_nav', _num);
           }
         });
       });
@@ -488,17 +498,23 @@ function closeOpening () {
 
       var imgLoad = imagesLoaded( $images );
 
+      var lastChange = 0;
       imgLoad.on('done', function(){
         var flag = true;
         $(document).on('scrolled', function(){
-          cnt++;
-          $hitagi_img.attr("src", images[cnt % images.length]);
+          var now = Date.now();
+          if (now - lastChange > 1000 / 12) {
+            cnt++;
+            lastChange = now;
+            $hitagi_img.attr("src", images[cnt % images.length]);
+          }
         });
       });
 
       var $hitagi = $("#hitagi");
+      var threshold_sz = ($(".scene").size() * 4.5 + $(".has_2").size() * 1.5 + $(".has_3").size() * 3 + $(".has_5").size() * 6 - 8);
       $(document).on('scrolled', function(){
-        var threshold = $window_height * ($(".scene").size() * 4.5 + $(".has_2").size() * 1.5 + $(".has_3").size() * 3 + $(".has_5").size() * 6 - 8);
+        var threshold = $window_height * threshold_sz;
         if( $scroll_top > threshold ) {
           $hitagi.css('transform', 'translateY(-'+($scroll_top - threshold) / 2 + 'px)');
           $(document).trigger('ending_movie_start');
@@ -531,12 +547,12 @@ function closeOpening () {
         return false;
       };
       $(document).on('scrolled', function(){
-        if( $scroll_top > $ending_wrapper.offset().top ) {
+        if( $scroll_top > $ending_wrapper.data('offset_top') ) {
           $ending.css({ 'position': 'fixed' });
           // console.log(ending_player.getPlayerState());
           if( ending_player ) {
             if (ending_player.getPlayerState() === 1 || ending_player.getPlayerState() === -1) {
-              window.scrollTo(0, $ending_wrapper.offset().top);
+              window.scrollTo(0, $ending_wrapper.data('offset_top'));
               $ending
                 .on('mousewheel', stopevent)
                 .on('scroll', stopevent)
@@ -574,11 +590,17 @@ function closeOpening () {
       $scene.data("contents", $scene.find(".content"));
 
 
+      var objectsVisible = null;
       $(document).on('scrolled', function(){
-        if( $scroll_top + $window_height > $scene.data('offset_top') && $scroll_top - 7.5 * $window_height < $scene.data('offset_top')  ) {
-          $scene.data("objects").show();
-        } else {
-          $scene.data("objects").hide();
+        var newVisible = $scroll_top + $window_height > $scene.data('offset_top') &&
+                   $scroll_top < $scene.data('offset_top') + $scene.data('height');
+        if (objectsVisible !== newVisible) {
+          if(newVisible) {
+            $scene.data("objects").show();
+          } else {
+            $scene.data("objects").hide();
+          }
+          objectsVisible = newVisible;
         }
       });
 
@@ -616,18 +638,21 @@ function closeOpening () {
             img1.src = "imgs/scene/low/"+num+"_1.jpg";
             img2.src = "imgs/scene/low/"+num+"_2.jpg";
           });
+          $object.data('height', $object.height());
+          $object.data('offset_top', $object.offset().top);
           $(document).on('scrolled', function(){
-            if(
-              ($scroll_top + $window_height - 70) > $object.offset().top
-            ) {
-              if (($scroll_top + 300) > $object.offset().top + $object.height()){
-                $object.removeClass('show');
-              } else {
-                $object.addClass('show');
-                $object.trigger('show');
-              }
-            } else {
-              $object.removeClass('show');
+            var wants = Math.min(($scroll_top + $window_height - 70) - $object.data('offset_top'),
+                                 ($object.data('offset_top') + $object.data('height')) - ($scroll_top + 300));
+            wants = Math.max(0, Math.min(1, 0.5 + (wants / 200)));
+            wants = -0.5 * (Math.cos(Math.PI*wants) - 1)
+            //wants = 1 / (1 + Math.exp((wants * 0.08) - 4));
+            var state = $object.data('opacity');
+            if (state !== wants) {
+                $object.data('opacity', wants);
+                $object[0].style.opacity = wants;
+                if (+state === 0) {
+                  $object.trigger('show');
+                }
             }
             // if(
             //   $scroll_top + $window_height < $scene.data('offset_top') + $scene.height() &&
@@ -657,11 +682,12 @@ function closeOpening () {
           'left': left + "px",
           'transform': 'rotateZ(' + rotate + 'deg)'
         });
+        $object.data('offset_top', top);
 
         $(document).on('scrolled', function(){
           if(
-            $scroll_top + $window_height < $scene.data('offset_top') + $scene.height() &&
-            $scroll_top > $scene.data('offset_top')
+            $scroll_top + $window_height > $scene.data('offset_top') &&
+            $scroll_top < $scene.data('offset_top') + $scene.data('height')
           ) {
             var translateY = size * (3 - (($scroll_top - $scene.data('offset_top')) / $window_height));
             $object.css({'transform': 'translateY(' + translateY + 'px) rotateZ(' + rotate + 'deg)'});
